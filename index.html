@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chess Overlay Helper</title>
+  <link rel="icon" href="assets/pieces/wN.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Chess Overlay Helper</h1>
+    <div class="mode-switch" role="tablist" aria-label="Helper mode">
+      <button type="button" role="tab" data-mode="help">Full Help</button>
+      <button type="button" role="tab" data-mode="tips">Tips &amp; Corrections</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="stage">
+      <div class="evalbar" id="evalbar" aria-label="Evaluation">
+        <div class="fill" id="evalfill"></div>
+        <span id="evaltext">0.0</span>
+      </div>
+      <div id="boardHost" class="board-host"></div>
+    </section>
+
+    <aside class="panel">
+      <section class="card coach" id="coach" aria-live="polite"></section>
+      <section class="card review hidden" id="review" aria-live="polite"></section>
+
+      <section class="card hidden" id="linesCard">
+        <h2>Engine's top moves</h2>
+        <ol class="lines" id="lines"></ol>
+      </section>
+
+      <section class="card">
+        <h2>Game</h2>
+        <div class="row">
+          <label>I play
+            <select id="human">
+              <option value="w">White</option>
+              <option value="b">Black</option>
+              <option value="both">Both sides</option>
+            </select>
+          </label>
+          <button type="button" id="newGame" class="primary">New game</button>
+        </div>
+        <label class="slider" id="eloRow">Opponent strength <output id="eloOut"></output>
+          <input type="range" id="elo" min="1320" max="3190" step="10">
+        </label>
+        <label class="slider">Analysis depth <output id="depthOut"></output>
+          <input type="range" id="depth" min="8" max="20" step="1">
+        </label>
+        <div class="toggles">
+          <label><input type="checkbox" id="optArrows"> Arrows</label>
+          <label><input type="checkbox" id="optRadar"> Threat radar</label>
+          <label id="autoRow"><input type="checkbox" id="optAuto"> Autopilot</label>
+        </div>
+        <div class="row">
+          <button type="button" id="undo">Undo</button>
+          <button type="button" id="flip">Flip board</button>
+          <button type="button" id="copyFen">Copy FEN</button>
+        </div>
+        <form class="row fen" id="fenForm">
+          <input type="text" id="fenInput" placeholder="Paste a FEN to set up a position" spellcheck="false" autocomplete="off">
+          <button type="submit">Load</button>
+        </form>
+        <p class="fen-error hidden" id="fenError"></p>
+      </section>
+
+      <section class="card">
+        <div class="moves-head">
+          <h2>Moves</h2>
+          <span class="tally" id="tally"></span>
+        </div>
+        <div class="moves" id="moves"></div>
+      </section>
+    </aside>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

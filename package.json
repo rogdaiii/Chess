@@ -1,0 +1,12 @@
+{
+  "name": "chess-overlay-helper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Chess board with two coaching modes: full engine help, and tips plus corrections.",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "license": "GPL-3.0-or-later"
+}
