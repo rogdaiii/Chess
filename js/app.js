@@ -2,8 +2,11 @@ import { Chess, validateFen } from '../vendor/chess.js';
 import { Board } from './board.js';
 import { Engine } from './engine.js';
 import * as A from './analysis.js';
+import { createWatcher } from './watch.js';
 
-const $ = (id) => document.getElementById(id);
+const appRoot = document.getElementById('app');
+// Scoped to #app so the UI keeps working after it is moved into a pop-out window.
+const $ = (id) => appRoot.querySelector(`#${id}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------ settings
@@ -36,6 +39,7 @@ const state = {
   thinking: false,   // opponent is choosing a move
   flipped: false,
   engineError: null,
+  watching: false,   // following a game on the screen instead of playing here
 };
 
 let engine = null;
@@ -53,7 +57,7 @@ try {
 const board = new Board($('boardHost'), {
   canMove: (sq) => {
     const p = chess.get(sq);
-    return !!p && p.color === chess.turn() && isHumanTurn() && !state.thinking && !state.pending && !chess.isGameOver();
+    return !!p && p.color === chess.turn() && isHumanTurn() && !state.thinking && !state.pending && !state.watching && !chess.isGameOver();
   },
   getTargets: (sq) => {
     const seen = new Set();
@@ -108,7 +112,7 @@ function render() {
   const last = chess.history({ verbose: true }).at(-1);
   board.setPosition({ pieces, lastMove: last ? { from: last.from, to: last.to } : null, checkSquare });
   board.setFlipped(state.flipped);
-  board.setInteractive(isHumanTurn() && !state.thinking && !state.pending && !chess.isGameOver() && !state.engineError);
+  board.setInteractive(isHumanTurn() && !state.thinking && !state.pending && !state.watching && !chess.isGameOver() && !state.engineError);
   renderOverlays();
   renderMoves();
   renderControls();
@@ -184,7 +188,7 @@ let startFen = new Chess().fen();
 const firstFen = () => startFen;
 
 function renderControls() {
-  document.querySelectorAll('.mode-switch button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === settings.mode)));
+  appRoot.querySelectorAll('.mode-switch button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === settings.mode)));
   $('human').value = settings.human;
   $('elo').value = settings.elo;
   $('eloOut').textContent = `${settings.elo} Elo`;
@@ -193,8 +197,9 @@ function renderControls() {
   $('optArrows').checked = settings.arrows;
   $('optRadar').checked = settings.radar;
   $('optAuto').checked = settings.autopilot;
-  $('eloRow').classList.toggle('hidden', settings.human === 'both');
-  $('autoRow').classList.toggle('hidden', settings.mode !== 'help' || settings.human === 'both');
+  $('autoRow').classList.toggle('hidden', settings.mode !== 'help' || settings.human === 'both' || state.watching);
+  $('undo').disabled = state.watching;
+  $('eloRow').classList.toggle('hidden', settings.human === 'both' || state.watching);
   $('optArrows').closest('label').classList.toggle('hidden', settings.mode !== 'help');
   $('evalbar').classList.toggle('hidden', settings.mode !== 'help');
   $('evalbar').classList.toggle('flipped', state.flipped);
@@ -348,7 +353,7 @@ async function humanMove(from, to, promotion) {
 }
 
 function playUci(uci) {
-  if (!isHumanTurn() || chess.isGameOver() || state.thinking || state.pending) return;
+  if (state.watching || !isHumanTurn() || chess.isGameOver() || state.thinking || state.pending) return;
   const m = A.uciToMove(uci);
   humanMove(m.from, m.to, m.promotion);
 }
@@ -409,7 +414,7 @@ async function grade(rec) {
   state.ann[state.ann.length - 1] = quality;
   state.review = review;
 
-  if (quality === 'mistake' || quality === 'blunder') {
+  if ((quality === 'mistake' || quality === 'blunder') && !state.watching) {
     state.pending = review;
     render();
     setCoach({ tone: 'warn', chip: 'Your call', title: 'Take it back?', lines: ['The opponent has not replied yet. You can fix this.'] });
@@ -454,7 +459,8 @@ function drive() {
   }
   if (state.engineError) return;
   if (!isHumanTurn()) {
-    opponentMove();
+    if (state.watching) setCoach({ tone: 'info', chip: 'Watching', title: 'Waiting for the opponent…', lines: ['Their move will show up as soon as it appears on the game screen.'] });
+    else opponentMove();
     return;
   }
   helper();
@@ -492,10 +498,10 @@ async function helper() {
       chip: 'Full help',
       title: `Play ${d.san}`,
       lines: [d.text, `Evaluation ${A.formatScore(best.score, chess.turn())} at depth ${best.depth}.${line ? ` Main line: ${line}` : ''}`],
-      actions: [{ label: `Play ${d.san}`, cls: 'primary', onClick: () => playUci(best.pv[0]) }],
+      actions: state.watching ? [] : [{ label: `Play ${d.san}`, cls: 'primary', onClick: () => playUci(best.pv[0]) }],
     });
     render();
-    if (settings.autopilot && settings.human !== 'both') {
+    if (settings.autopilot && settings.human !== 'both' && !state.watching) {
       await sleep(900);
       if (gen === state.gen && settings.autopilot && settings.mode === 'help') playUci(best.pv[0]);
     }
@@ -569,7 +575,7 @@ function newGame(fen) {
   drive();
 }
 
-document.querySelectorAll('.mode-switch button').forEach((b) =>
+appRoot.querySelectorAll('.mode-switch button').forEach((b) =>
   b.addEventListener('click', () => {
     if (settings.mode === b.dataset.mode) return;
     settings.mode = b.dataset.mode;
@@ -663,5 +669,120 @@ $('fenForm').addEventListener('submit', (e) => {
   state.flipped = new Chess(fen).turn() === 'b';
   render();
 });
+
+// ------------------------------------------------------- screen watching
+function applyObserved(moves) {
+  let rec = null;
+  let mover = null;
+  for (const m of moves) {
+    const fenBefore = chess.fen();
+    mover = chess.turn();
+    let move;
+    try {
+      move = chess.move(m);
+    } catch {
+      return syncFromScratch();
+    }
+    rec = commit(move, fenBefore);
+  }
+  if (!rec) return;
+  const mine = settings.human === 'both' || mover === settings.human;
+  engine?.cancelAll();
+  if (mine) state.review = null;
+  if (mine && settings.mode === 'tips') {
+    render();
+    grade(rec);
+  } else {
+    drive();
+  }
+}
+
+function syncFromScratch() {
+  // The screen disagreed with our position in a way we cannot replay. Start over from what we see.
+  drive();
+}
+
+const watcher = createWatcher({
+  root: appRoot,
+  getChess: () => chess,
+  getStartFen: () => startFen,
+  hooks: {
+    onStart: ({ whiteBottom }) => {
+      state.watching = true;
+      newGame();
+      state.flipped = !whiteBottom;
+      render();
+    },
+    onMoves: applyObserved,
+    onUndo: (plies) => {
+      for (let i = 0; i < plies; i++) {
+        chess.undo();
+        state.ann.pop();
+      }
+      state.review = null;
+      resetAsync();
+      drive();
+    },
+    onNewGame: () => {
+      const flipped = state.flipped;
+      newGame();
+      state.flipped = flipped;
+      render();
+    },
+    onSync: (fen) => {
+      const flipped = state.flipped;
+      newGame(fen);
+      state.flipped = flipped;
+      render();
+    },
+    guessTurn: () => {
+      const last = chess.history({ verbose: true }).at(-1);
+      return last ? A.other(last.color) : 'w';
+    },
+    beforeRecalibrate: () => popIn(),
+    onStop: () => {
+      state.watching = false;
+      resetAsync();
+      drive();
+    },
+  },
+});
+
+// Debug and test handle: feed the watcher any canvas instead of a shared screen.
+window.chessHelper = { watchSource: (src) => watcher.useSource(src), reader: watcher.reader, state, chess };
+
+// Pop-out: move the whole UI into a small always-on-top window next to the game.
+let pip = null;
+function popIn() {
+  if (!pip) return;
+  const w = pip;
+  pip = null;
+  document.body.prepend(appRoot);
+  w.close();
+}
+if ('documentPictureInPicture' in window) {
+  $('popOut').classList.remove('hidden');
+  $('popOut').addEventListener('click', async () => {
+    if (pip) return popIn();
+    try {
+      pip = await window.documentPictureInPicture.requestWindow({ width: 440, height: 760 });
+    } catch {
+      return;
+    }
+    for (const sheet of document.styleSheets) {
+      const link = pip.document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = sheet.href;
+      pip.document.head.append(link);
+    }
+    pip.document.body.append(appRoot);
+    pip.addEventListener('pagehide', () => {
+      if (pip) {
+        pip = null;
+        document.body.prepend(appRoot);
+      }
+    });
+  });
+}
 
 newGame();
